@@ -7,7 +7,7 @@ from aiogram import Bot, Dispatcher, F, types
 from aiogram.filters import Command
 from aiogram.filters.chat_member_updated import ChatMemberUpdatedFilter, JOIN_TRANSITION
 from aiogram.utils.keyboard import InlineKeyboardBuilder
-from google import genai
+import google.generativeai as genai
 
 logging.basicConfig(level=logging.INFO)
 
@@ -20,11 +20,15 @@ if not TOKEN:
 bot = Bot(token=TOKEN)
 dp = Dispatcher()
 
-ai_client = genai.Client(api_key=GEMINI_KEY) if GEMINI_KEY else None
+# Настройка Gemini API
+if GEMINI_KEY:
+    genai.configure(api_key=GEMINI_KEY)
+    ai_model = genai.GenerativeModel('gemini-1.5-flash')
+else:
+    ai_model = None
 
 DATA_FILE = "pets_data.json"
 
-# Галерея скинов Петти с вашими прямыми ссылками
 SKINS = {
     "blue": {
         "name": "🩵 Космический синий",
@@ -52,7 +56,7 @@ SKINS = {
     }
 }
 
-# --- ФУНКЦИИ АВТОСОХРАНЕНИЯ ДАННЫХ ---
+# --- АВТОСОХРАНЕНИЕ ---
 
 def load_all_pets():
     if os.path.exists(DATA_FILE):
@@ -60,7 +64,7 @@ def load_all_pets():
             with open(DATA_FILE, "r", encoding="utf-8") as f:
                 return json.load(f)
         except Exception as e:
-            logging.error(f"Ошибка чтения файла данных: {e}")
+            logging.error(f"Ошибка чтения файла: {e}")
     return {}
 
 def save_all_pets(data):
@@ -68,7 +72,7 @@ def save_all_pets(data):
         with open(DATA_FILE, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
     except Exception as e:
-        logging.error(f"Ошибка сохранения файла данных: {e}")
+        logging.error(f"Ошибка сохранения файла: {e}")
 
 pets_db = load_all_pets()
 
@@ -88,32 +92,28 @@ def get_pet(chat_id: int):
 # --- ИИ ГЕНЕРАЦИЯ ---
 
 def generate_ai_event(pet_data: dict, mood_context: str) -> str:
-    if not ai_client:
-        fallback_events = [
-            f"🐾 {pet_data['name']} тихо шуршит пакетом в углу...",
-            f"📦 {pet_data['name']} пытался залезть в коробку, но промазал.",
-            f"🧶 {pet_data['name']} катает по комнате виртуальный клубок."
-        ]
+    fallback_events = [
+        f"🐾 {pet_data['name']} тихо шуршит пакетом в углу...",
+        f"📦 {pet_data['name']} пытался залезть в коробку, но промазал.",
+        f"🧶 {pet_data['name']} катает по комнате виртуальный клубок."
+    ]
+    if not ai_model:
         return random.choice(fallback_events)
 
     color_info = SKINS.get(pet_data["color"], SKINS["blue"])["name"]
     prompt = (
         f"Ты — виртуальный домашний инопланетный питомец по имени {pet_data['name']}. "
-        f"Твой текущий цвет шерстки: {color_info}. "
-        f"Твоё состояние сейчас: {mood_context}. "
-        f"Придумай одну очень короткую, смешную и забавную выходку или фразу (1-2 предложения), "
-        f"которую ты прямо сейчас делаешь в групповом чате. Добавь подходящие эмодзи."
+        f"Твой цвет шерстки: {color_info}. Состояние: {mood_context}. "
+        f"Придумай одну очень короткую, смешную и забавную выходку или фразу (1-2 предложения) "
+        f"для чата с друзьями. Добавь эмодзи."
     )
 
     try:
-        response = ai_client.models.generate_content(
-            model='gemini-2.5-flash',
-            contents=prompt,
-        )
+        response = ai_model.generate_content(prompt)
         return response.text.strip()
     except Exception as e:
-        logging.error(f"Ошибка Gemini: {e}")
-        return f"🐾 {pet_data['name']} задумчиво смотрит в окно..."
+        logging.error(f"Ошибка Gemini Event: {e}")
+        return random.choice(fallback_events)
 
 def get_status_text(pet_data: dict) -> str:
     def make_bar(value):
@@ -228,23 +228,30 @@ async def cmd_gift(message: types.Message):
     pet_data = get_pet(message.chat.id)
     user_name = message.from_user.first_name
     
-    if ai_client:
+    fallback_gifts = [
+        f"🎁 {pet_data['name']} принёс для {user_name} блестящий космический камушек!",
+        f"🎁 {pet_data['name']} притащил в зубах свежий кекс с другого конца галактики!",
+        f"🎁 {pet_data['name']} подарил {user_name} маленькую звёздочку в баночке!"
+    ]
+
+    if ai_model:
         prompt = (
-            f"Придумай забавный виртуальный подарок, который "
+            f"Придумай очень смешной, милый или необычный виртуальный подарок, который "
             f"питомец {pet_data['name']} принёс в зубах/лапах для пользователя {user_name}. "
-            f"Одно короткое предложение с эмодзи."
+            f"Одно короткое предложение с эмодзи. Отвечай только текстом подарка."
         )
         try:
-            res = ai_client.models.generate_content(model='gemini-2.5-flash', contents=prompt)
+            res = ai_model.generate_content(prompt)
             gift_text = res.text.strip()
-        except Exception:
-            gift_text = f"🎁 {pet_data['name']} принёс для {user_name} блестящий камушек!"
+        except Exception as e:
+            logging.error(f"Ошибка Gemini Gift: {e}")
+            gift_text = random.choice(fallback_gifts)
     else:
-        gift_text = f"🎁 {pet_data['name']} принёс для {user_name} красивую сосновую шишку!"
+        gift_text = random.choice(fallback_gifts)
 
     await message.answer(gift_text)
 
-# --- ОБРАБОТКА КНОПОК МЕНЮ ---
+# --- ОБРАБОТКА КНОПОК ---
 
 @dp.callback_query(F.data == "open_color_menu")
 async def process_color_menu(callback: types.CallbackQuery):
@@ -376,7 +383,7 @@ async def autonomous_life_loop():
                 try:
                     await bot.send_message(int(chat_id_str), event_msg)
                 except Exception as e:
-                    logging.error(f"Не удалось отправить авто-сообщение в {chat_id_str}: {e}")
+                    logging.error(f"Не удалось отправить сообщение: {e}")
         
         save_all_pets(pets_db)
 

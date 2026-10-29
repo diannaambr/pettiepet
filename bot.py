@@ -21,23 +21,23 @@ dp = Dispatcher()
 
 ai_client = genai.Client(api_key=GEMINI_KEY) if GEMINI_KEY else None
 
-# Галерея скинов (картинки разных окрасов Рудика)
+# Галерея скинов с надёжными внешними ссылками
 SKINS = {
     "blue": {
         "name": "🩵 Космический синий",
-        "url": "https://images.unsplash.com/photo-1579783902614-a3fb3927b675?w=800&auto=format&fit=crop"
+        "url": "https://picsum.photos/id/1025/600/600"
     },
     "pink": {
         "name": "🌸 Неоново-розовый",
-        "url": "https://images.unsplash.com/photo-1534447677768-be436bb09401?w=800&auto=format&fit=crop"
+        "url": "https://picsum.photos/id/1062/600/600"
     },
     "purple": {
         "name": "💜 Галактический фиолетовый",
-        "url": "https://images.unsplash.com/photo-1507525428034-b723cf961d3e?w=800&auto=format&fit=crop"
+        "url": "https://picsum.photos/id/1069/600/600"
     },
     "gold": {
         "name": "🟡 Золотой звёздный",
-        "url": "https://images.unsplash.com/photo-1518709268805-4e9042af9f23?w=800&auto=format&fit=crop"
+        "url": "https://picsum.photos/id/1074/600/600"
     }
 }
 
@@ -47,7 +47,7 @@ pet = {
     "satiety": 70,
     "happiness": 70,
     "energy": 70,
-    "color": "blue",  # Базовый цвет
+    "color": "blue",
     "chat_id": None
 }
 
@@ -121,31 +121,46 @@ async def bot_added_to_chat(event: types.ChatMemberUpdated):
     welcome_text = (
         f"Всем привет! 🐾 Я ваш новый инопланетный питомец **{pet['name']}**!\n\n"
         f"Вот что со мной можно делать:\n"
-        f"• `/pet` — посмотреть моё состояние и фото 📸\n"
+        f"• `/pet` — посмотреть моё состояние 📸\n"
         f"• `/color` — изменить цвет моей шерстки 🎨\n"
         f"• `/gift` — попросить у меня случайный подарок 🎁\n"
         f"• `/rename [имя]` — дать мне новое имя ✨\n\n"
     ) + get_status_text()
 
-    await bot.send_photo(
-        chat_id=event.chat.id,
-        photo=SKINS[pet['color']]['url'],
-        caption=welcome_text,
-        parse_mode="Markdown",
-        reply_markup=get_keyboard()
-    )
+    try:
+        await bot.send_photo(
+            chat_id=event.chat.id,
+            photo=SKINS[pet['color']]['url'],
+            caption=welcome_text,
+            parse_mode="Markdown",
+            reply_markup=get_keyboard()
+        )
+    except Exception:
+        await bot.send_message(
+            chat_id=event.chat.id,
+            text=welcome_text,
+            parse_mode="Markdown",
+            reply_markup=get_keyboard()
+        )
 
 # --- КОМАНДЫ ---
 
 @dp.message(Command("start", "pet"))
 async def cmd_pet(message: types.Message):
     pet["chat_id"] = message.chat.id
-    await message.answer_photo(
-        photo=SKINS[pet['color']]['url'],
-        caption=get_status_text(),
-        parse_mode="Markdown",
-        reply_markup=get_keyboard()
-    )
+    try:
+        await message.answer_photo(
+            photo=SKINS[pet['color']]['url'],
+            caption=get_status_text(),
+            parse_mode="Markdown",
+            reply_markup=get_keyboard()
+        )
+    except Exception:
+        await message.answer(
+            text=get_status_text(),
+            parse_mode="Markdown",
+            reply_markup=get_keyboard()
+        )
 
 @dp.message(Command("color"))
 async def cmd_color(message: types.Message):
@@ -183,10 +198,16 @@ async def cmd_gift(message: types.Message):
 
 @dp.callback_query(F.data == "open_color_menu")
 async def process_color_menu(callback: types.CallbackQuery):
-    await callback.message.edit_caption(
-        caption="Выберите новый цвет шерстки для Рудика: 🎨",
-        reply_markup=get_color_keyboard()
-    )
+    if callback.message.photo:
+        await callback.message.edit_caption(
+            caption="Выберите новый цвет шерстки для Рудика: 🎨",
+            reply_markup=get_color_keyboard()
+        )
+    else:
+        await callback.message.edit_text(
+            text="Выберите новый цвет шерстки для Рудика: 🎨",
+            reply_markup=get_color_keyboard()
+        )
     await callback.answer()
 
 @dp.callback_query(F.data.startswith("set_color_"))
@@ -196,22 +217,42 @@ async def process_set_color(callback: types.CallbackQuery):
         pet["color"] = new_color
         await callback.answer(f"Цвет изменён на {SKINS[new_color]['name']}! ✨")
         
-        # Обновляем сообщение и меняем фото
-        media = types.InputMediaPhoto(
-            media=SKINS[pet['color']]['url'],
-            caption=f"🎨 Рудик сменил цвет шерстки!\n\n{get_status_text()}",
-            parse_mode="Markdown"
-        )
-        await callback.message.edit_media(media=media, reply_markup=get_keyboard())
+        if callback.message.photo:
+            try:
+                media = types.InputMediaPhoto(
+                    media=SKINS[pet['color']]['url'],
+                    caption=f"🎨 Рудик сменил цвет шерстки!\n\n{get_status_text()}",
+                    parse_mode="Markdown"
+                )
+                await callback.message.edit_media(media=media, reply_markup=get_keyboard())
+            except Exception:
+                await callback.message.edit_caption(
+                    caption=f"🎨 Рудик сменил цвет шерстки!\n\n{get_status_text()}",
+                    parse_mode="Markdown",
+                    reply_markup=get_keyboard()
+                )
+        else:
+            await callback.message.edit_text(
+                text=f"🎨 Рудик сменил цвет шерстки!\n\n{get_status_text()}",
+                parse_mode="Markdown",
+                reply_markup=get_keyboard()
+            )
 
 @dp.callback_query(F.data == "back_to_status")
 async def process_back_to_status(callback: types.CallbackQuery):
-    media = types.InputMediaPhoto(
-        media=SKINS[pet['color']]['url'],
-        caption=get_status_text(),
-        parse_mode="Markdown"
-    )
-    await callback.message.edit_media(media=media, reply_markup=get_keyboard())
+    if callback.message.photo:
+        await callback.message.edit_caption(
+            caption=get_status_text(),
+            parse_mode="Markdown",
+            reply_markup=get_keyboard()
+        )
+    else:
+        await callback.message.edit_text(
+            text=get_status_text(),
+            parse_mode="Markdown",
+            reply_markup=get_keyboard()
+        )
+    await callback.answer()
 
 @dp.callback_query(F.data == "feed")
 async def process_feed(callback: types.CallbackQuery):
@@ -220,11 +261,12 @@ async def process_feed(callback: types.CallbackQuery):
         return
     
     pet["satiety"] = min(100, pet["satiety"] + 25)
-    await callback.message.edit_caption(
-        caption=f"🍎 Вы покормили {pet['name']}!\n\n{get_status_text()}",
-        parse_mode="Markdown",
-        reply_markup=get_keyboard()
-    )
+    caption_text = f"🍎 Вы покормили {pet['name']}!\n\n{get_status_text()}"
+    
+    if callback.message.photo:
+        await callback.message.edit_caption(caption=caption_text, parse_mode="Markdown", reply_markup=get_keyboard())
+    else:
+        await callback.message.edit_text(text=caption_text, parse_mode="Markdown", reply_markup=get_keyboard())
     await callback.answer()
 
 @dp.callback_query(F.data == "play")
@@ -236,22 +278,23 @@ async def process_play(callback: types.CallbackQuery):
     pet["happiness"] = min(100, pet["happiness"] + 20)
     pet["energy"] = max(0, pet["energy"] - 15)
     pet["satiety"] = max(0, pet["satiety"] - 10)
+    caption_text = f"⚽ Отлично поиграли!\n\n{get_status_text()}"
     
-    await callback.message.edit_caption(
-        caption=f"⚽ Отлично поиграли!\n\n{get_status_text()}",
-        parse_mode="Markdown",
-        reply_markup=get_keyboard()
-    )
+    if callback.message.photo:
+        await callback.message.edit_caption(caption=caption_text, parse_mode="Markdown", reply_markup=get_keyboard())
+    else:
+        await callback.message.edit_text(text=caption_text, parse_mode="Markdown", reply_markup=get_keyboard())
     await callback.answer()
 
 @dp.callback_query(F.data == "sleep")
 async def process_sleep(callback: types.CallbackQuery):
     pet["energy"] = min(100, pet["energy"] + 40)
-    await callback.message.edit_caption(
-        caption=f"😴 {pet['name']} вздремнул и восстановил силы!\n\n{get_status_text()}",
-        parse_mode="Markdown",
-        reply_markup=get_keyboard()
-    )
+    caption_text = f"😴 {pet['name']} вздремнул и восстановил силы!\n\n{get_status_text()}"
+    
+    if callback.message.photo:
+        await callback.message.edit_caption(caption=caption_text, parse_mode="Markdown", reply_markup=get_keyboard())
+    else:
+        await callback.message.edit_text(text=caption_text, parse_mode="Markdown", reply_markup=get_keyboard())
     await callback.answer()
 
 # --- ФОНОВЫЙ ЦИКЛ ---

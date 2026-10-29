@@ -235,3 +235,164 @@ async def cmd_gift(message: types.Message):
     ]
 
     if ai_client:
+        prompt = (
+            f"Придумай очень смешной, милый или необычный виртуальный подарок, который "
+            f"питомец {pet_data['name']} принёс в зубах/лапах для пользователя {user_name}. "
+            f"Одно короткое предложение с эмодзи. Отвечай только текстом подарка."
+        )
+        try:
+            res = ai_client.models.generate_content(
+                model='gemini-2.5-flash',
+                contents=prompt
+            )
+            gift_text = res.text.strip()
+        except Exception as e:
+            logging.error(f"Ошибка Gemini Gift: {e}")
+            gift_text = random.choice(fallback_gifts)
+    else:
+        gift_text = random.choice(fallback_gifts)
+
+    await message.answer(gift_text)
+
+# --- ОБРАБОТКА КНОПОК ---
+
+@dp.callback_query(F.data == "open_color_menu")
+async def process_color_menu(callback: types.CallbackQuery):
+    pet_data = get_pet(callback.message.chat.id)
+    text = f"Выберите новый цвет шерстки для {pet_data['name']}: 🎨"
+    
+    if callback.message.photo:
+        await callback.message.edit_caption(caption=text, reply_markup=get_color_keyboard())
+    else:
+        await callback.message.edit_text(text=text, reply_markup=get_color_keyboard())
+    await callback.answer()
+
+@dp.callback_query(F.data.startswith("set_color_"))
+async def process_set_color(callback: types.CallbackQuery):
+    pet_data = get_pet(callback.message.chat.id)
+    new_color = callback.data.replace("set_color_", "")
+    
+    if new_color in SKINS:
+        pet_data["color"] = new_color
+        save_all_pets(pets_db)
+        
+        skin = SKINS[new_color]
+        await callback.answer(f"Цвет изменён на {skin['name']}! ✨")
+        
+        if callback.message.photo:
+            try:
+                media = types.InputMediaPhoto(
+                    media=skin['url'],
+                    caption=f"🎨 {pet_data['name']} сменил цвет шерстки!\n\n{get_status_text(pet_data)}",
+                    parse_mode="Markdown"
+                )
+                await callback.message.edit_media(media=media, reply_markup=get_keyboard())
+            except Exception:
+                await callback.message.edit_caption(
+                    caption=f"🎨 {pet_data['name']} сменил цвет шерстки!\n\n{get_status_text(pet_data)}",
+                    parse_mode="Markdown",
+                    reply_markup=get_keyboard()
+                )
+        else:
+            await callback.message.edit_text(
+                text=f"🎨 {pet_data['name']} сменил цвет шерстки!\n\n{get_status_text(pet_data)}",
+                parse_mode="Markdown",
+                reply_markup=get_keyboard()
+            )
+
+@dp.callback_query(F.data == "back_to_status")
+async def process_back_to_status(callback: types.CallbackQuery):
+    pet_data = get_pet(callback.message.chat.id)
+    if callback.message.photo:
+        await callback.message.edit_caption(
+            caption=get_status_text(pet_data),
+            parse_mode="Markdown",
+            reply_markup=get_keyboard()
+        )
+    else:
+        await callback.message.edit_text(
+            text=get_status_text(pet_data),
+            parse_mode="Markdown",
+            reply_markup=get_keyboard()
+        )
+    await callback.answer()
+
+@dp.callback_query(F.data == "feed")
+async def process_feed(callback: types.CallbackQuery):
+    pet_data = get_pet(callback.message.chat.id)
+    if pet_data["satiety"] >= 100:
+        await callback.answer("Я уже сыт! 🥐", show_alert=True)
+        return
+    
+    pet_data["satiety"] = min(100, pet_data["satiety"] + 25)
+    save_all_pets(pets_db)
+    
+    caption_text = f"🍎 Вы покормили {pet_data['name']}!\n\n{get_status_text(pet_data)}"
+    
+    if callback.message.photo:
+        await callback.message.edit_caption(caption=caption_text, parse_mode="Markdown", reply_markup=get_keyboard())
+    else:
+        await callback.message.edit_text(text=caption_text, parse_mode="Markdown", reply_markup=get_keyboard())
+    await callback.answer()
+
+@dp.callback_query(F.data == "play")
+async def process_play(callback: types.CallbackQuery):
+    pet_data = get_pet(callback.message.chat.id)
+    if pet_data["energy"] < 15:
+        await callback.answer("Я слишком устал для игр! 😴", show_alert=True)
+        return
+    
+    pet_data["happiness"] = min(100, pet_data["happiness"] + 20)
+    pet_data["energy"] = max(0, pet_data["energy"] - 15)
+    pet_data["satiety"] = max(0, pet_data["satiety"] - 10)
+    save_all_pets(pets_db)
+    
+    caption_text = f"⚽ Отлично поиграли!\n\n{get_status_text(pet_data)}"
+    
+    if callback.message.photo:
+        await callback.message.edit_caption(caption=caption_text, parse_mode="Markdown", reply_markup=get_keyboard())
+    else:
+        await callback.message.edit_text(text=caption_text, parse_mode="Markdown", reply_markup=get_keyboard())
+    await callback.answer()
+
+@dp.callback_query(F.data == "sleep")
+async def process_sleep(callback: types.CallbackQuery):
+    pet_data = get_pet(callback.message.chat.id)
+    pet_data["energy"] = min(100, pet_data["energy"] + 40)
+    save_all_pets(pets_db)
+    
+    caption_text = f"😴 {pet_data['name']} вздремнул и восстановил силы!\n\n{get_status_text(pet_data)}"
+    
+    if callback.message.photo:
+        await callback.message.edit_caption(caption=caption_text, parse_mode="Markdown", reply_markup=get_keyboard())
+    else:
+        await callback.message.edit_text(text=caption_text, parse_mode="Markdown", reply_markup=get_keyboard())
+    await callback.answer()
+
+# --- ФОНОВЫЙ ЦИКЛ ---
+
+async def autonomous_life_loop():
+    while True:
+        await asyncio.sleep(1800)
+        
+        for chat_id_str, pet_data in pets_db.items():
+            pet_data["satiety"] = max(0, pet_data["satiety"] - 5)
+            pet_data["happiness"] = max(0, pet_data["happiness"] - 3)
+            pet_data["energy"] = max(0, pet_data["energy"] - 2)
+
+            if random.random() < 0.4:
+                mood = "голодный" if pet_data["satiety"] < 40 else "весёлый и игривый"
+                event_msg = generate_ai_event(pet_data, mood)
+                try:
+                    await bot.send_message(int(chat_id_str), event_msg)
+                except Exception as e:
+                    logging.error(f"Не удалось отправить сообщение: {e}")
+        
+        save_all_pets(pets_db)
+
+async def main():
+    asyncio.create_task(autonomous_life_loop())
+    await dp.start_polling(bot)
+
+if __name__ == "__main__":
+    asyncio.run(main())

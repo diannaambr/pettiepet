@@ -18,22 +18,21 @@ if not TOKEN:
 bot = Bot(token=TOKEN)
 dp = Dispatcher()
 
-# Инициализация клиента Gemini (если ключ задан)
+# Инициализация ИИ-клиента Gemini (если задан ключ)
 ai_client = genai.Client(api_key=GEMINI_KEY) if GEMINI_KEY else None
 
-# Состояние питомца и ID чата для авто-сообщений
+# Состояние питомца
 pet = {
     "name": "Рудик",
-    "satiety": 70,
-    "happiness": 70,
-    "energy": 70,
-    "chat_id": None  # Запоминается автоматически при вызове /pet в группе
+    "satiety": 70,   # Сытость (0-100)
+    "happiness": 70, # Счастье (0-100)
+    "energy": 70,    # Энергия (0-100)
+    "chat_id": None  # ID чата запоминается при /start или /pet
 }
 
 def generate_ai_event(mood_context: str) -> str:
-    """Генерация уникальной выходки питомца через Gemini"""
+    """Генерация автономной выходки питомца через Gemini"""
     if not ai_client:
-        # Резервные фразы, если ключ GEMINI_API_KEY не установлен
         fallback_events = [
             f"🐾 {pet['name']} тихо шуршит пакетом в углу...",
             f"📦 {pet['name']} пытался залезть в коробку, но промазал.",
@@ -58,7 +57,7 @@ def generate_ai_event(mood_context: str) -> str:
         logging.error(f"Ошибка Gemini: {e}")
         return f"🐾 {pet['name']} задумчиво смотрит в окно..."
 
-def get_status_text():
+def get_status_text() -> str:
     def make_bar(value):
         filled = round(value / 20)
         return "🟩" * filled + "⬜" * (5 - filled)
@@ -78,9 +77,26 @@ def get_keyboard():
     builder.adjust(3)
     return builder.as_markup()
 
-@dp.message(Command("start", "pet"))
+# --- КОМАНДЫ БОТА ---
+
+@dp.message(Command("start"))
+async def cmd_start(message: types.Message):
+    pet["chat_id"] = message.chat.id
+    
+    welcome_text = (
+        f"Привет всем! 🐾 Я ваш новый питомец **{pet['name']}**!\n\n"
+        f"Я буду жить в этом чате, играть с вами и иногда устраивать маленькие внезапные выходки 📦\n\n"
+        f"Вот что со мной можно делать:\n"
+        f"• `/pet` — проверить моё состояние и поухаживать за мной\n"
+        f"• `/gift` — попросить меня принести вам случайный подарок 🎁\n"
+        f"• `/rename [имя]` — дать мне новое имя ✨\n\n"
+        f"Не забывайте меня кормить и укладывать спать! Начнём?\n\n"
+    ) + get_status_text()
+
+    await message.answer(welcome_text, parse_mode="Markdown", reply_markup=get_keyboard())
+
+@dp.message(Command("pet"))
 async def cmd_pet(message: types.Message):
-    # Запоминаем ID чата, чтобы бот мог сам писать сюда автономные сообщения
     pet["chat_id"] = message.chat.id
     await message.answer(get_status_text(), parse_mode="Markdown", reply_markup=get_keyboard())
 
@@ -112,6 +128,8 @@ async def cmd_gift(message: types.Message):
 
     await message.answer(gift_text)
 
+# --- ОБРАБОТКА КНОПОК ---
+
 @dp.callback_query(F.data == "feed")
 async def process_feed(callback: types.CallbackQuery):
     if pet["satiety"] >= 100:
@@ -121,60 +139,3 @@ async def process_feed(callback: types.CallbackQuery):
     pet["satiety"] = min(100, pet["satiety"] + 25)
     await callback.message.edit_text(
         f"🍎 Вы покормили {pet['name']}!\n\n{get_status_text()}",
-        parse_mode="Markdown",
-        reply_markup=get_keyboard()
-    )
-    await callback.answer()
-
-@dp.callback_query(F.data == "play")
-async def process_play(callback: types.CallbackQuery):
-    if pet["energy"] < 15:
-        await callback.answer("Я слишком устал для игр! 😴", show_alert=True)
-        return
-    
-    pet["happiness"] = min(100, pet["happiness"] + 20)
-    pet["energy"] = max(0, pet["energy"] - 15)
-    pet["satiety"] = max(0, pet["satiety"] - 10)
-    
-    await callback.message.edit_text(
-        f"⚽ Отлично поиграли!\n\n{get_status_text()}",
-        parse_mode="Markdown",
-        reply_markup=get_keyboard()
-    )
-    await callback.answer()
-
-@dp.callback_query(F.data == "sleep")
-async def process_sleep(callback: types.CallbackQuery):
-    pet["energy"] = min(100, pet["energy"] + 40)
-    await callback.message.edit_text(
-        f"😴 {pet['name']} вздремнул и восстановил силы!\n\n{get_status_text()}",
-        parse_mode="Markdown",
-        reply_markup=get_keyboard()
-    )
-    await callback.answer()
-
-# Фоновый цикл: естественные потребности и генерация автономных выходок
-async def autonomous_life_loop():
-    while True:
-        # Каждые 30 минут потребности постепенно снижаются
-        await asyncio.sleep(1800)
-        
-        pet["satiety"] = max(0, pet["satiety"] - 5)
-        pet["happiness"] = max(0, pet["happiness"] - 3)
-        pet["energy"] = max(0, pet["energy"] - 2)
-
-        # Если бот знает чат, с вероятностью 40% он совершает автономную выходку
-        if pet["chat_id"] and random.random() < 0.4:
-            mood = "голодный" if pet["satiety"] < 40 else "весёлый и игривый"
-            event_msg = generate_ai_event(mood)
-            try:
-                await bot.send_message(pet["chat_id"], event_msg)
-            except Exception as e:
-                logging.error(f"Не удалось отправить авто-сообщение: {e}")
-
-async def main():
-    asyncio.create_task(autonomous_life_loop())
-    await dp.start_polling(bot)
-
-if __name__ == "__main__":
-    asyncio.run(main())

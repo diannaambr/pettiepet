@@ -4,6 +4,7 @@ import os
 import random
 from aiogram import Bot, Dispatcher, F, types
 from aiogram.filters import Command
+from aiogram.filters.chat_member_updated import ChatMemberUpdatedFilter, JOIN_TRANSITION
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from google import genai
 
@@ -27,7 +28,7 @@ pet = {
     "satiety": 70,   # Сытость (0-100)
     "happiness": 70, # Счастье (0-100)
     "energy": 70,    # Энергия (0-100)
-    "chat_id": None  # ID чата запоминается при /start или /pet
+    "chat_id": None  # ID чата запоминается при /start, /pet или входе в группу
 }
 
 def generate_ai_event(mood_context: str) -> str:
@@ -77,14 +78,37 @@ def get_keyboard():
     builder.adjust(3)
     return builder.as_markup()
 
-# --- КОМАНДЫ БОТА ---
+# --- АВТОМАТИЧЕСКОЕ ПРИВЕТСТВИЕ ПРИ ДОБАВЛЕНИИ В ЧАТ ---
+
+@dp.my_chat_member(ChatMemberUpdatedFilter(member_status_changed=JOIN_TRANSITION))
+async def bot_added_to_chat(event: types.ChatMemberUpdated):
+    pet["chat_id"] = event.chat.id
+    
+    welcome_text = (
+        f"Всем привет! 🐾 Я ваш новый инопланетный питомец **{pet['name']}**!\n\n"
+        f"Теперь я буду жить в этом чате, играть с вами и иногда устраивать маленькие внезапные выходки 📦\n\n"
+        f"Вот что со мной можно делать:\n"
+        f"• `/pet` — проверить моё состояние и поухаживать за мной\n"
+        f"• `/gift` — попросить меня принести вам случайный подарок 🎁\n"
+        f"• `/rename [имя]` — дать мне новое имя ✨\n\n"
+        f"Не забывайте меня кормить и укладывать спать! Начнём?\n\n"
+    ) + get_status_text()
+
+    await bot.send_message(
+        chat_id=event.chat.id,
+        text=welcome_text,
+        parse_mode="Markdown",
+        reply_markup=get_keyboard()
+    )
+
+# --- КОМANDЫ БОТА ---
 
 @dp.message(Command("start"))
 async def cmd_start(message: types.Message):
     pet["chat_id"] = message.chat.id
     
     welcome_text = (
-        f"Привет всем! 🐾 Я ваш новый питомец **{pet['name']}**!\n\n"
+        f"Привет всем! 🐾 Я ваш новый инопланетный питомец **{pet['name']}**!\n\n"
         f"Я буду жить в этом чате, играть с вами и иногда устраивать маленькие внезапные выходки 📦\n\n"
         f"Вот что со мной можно делать:\n"
         f"• `/pet` — проверить моё состояние и поухаживать за мной\n"

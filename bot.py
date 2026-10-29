@@ -139,3 +139,59 @@ async def process_feed(callback: types.CallbackQuery):
     pet["satiety"] = min(100, pet["satiety"] + 25)
     await callback.message.edit_text(
         f"🍎 Вы покормили {pet['name']}!\n\n{get_status_text()}",
+        parse_mode="Markdown",
+        reply_markup=get_keyboard()
+    )
+    await callback.answer()
+
+@dp.callback_query(F.data == "play")
+async def process_play(callback: types.CallbackQuery):
+    if pet["energy"] < 15:
+        await callback.answer("Я слишком устал для игр! 😴", show_alert=True)
+        return
+    
+    pet["happiness"] = min(100, pet["happiness"] + 20)
+    pet["energy"] = max(0, pet["energy"] - 15)
+    pet["satiety"] = max(0, pet["satiety"] - 10)
+    
+    await callback.message.edit_text(
+        f"⚽ Отлично поиграли!\n\n{get_status_text()}",
+        parse_mode="Markdown",
+        reply_markup=get_keyboard()
+    )
+    await callback.answer()
+
+@dp.callback_query(F.data == "sleep")
+async def process_sleep(callback: types.CallbackQuery):
+    pet["energy"] = min(100, pet["energy"] + 40)
+    await callback.message.edit_text(
+        f"😴 {pet['name']} вздремнул и восстановил силы!\n\n{get_status_text()}",
+        parse_mode="Markdown",
+        reply_markup=get_keyboard()
+    )
+    await callback.answer()
+
+# --- ФОНОВЫЙ ЦИКЛ (АВТОНОМНАЯ ЖИЗНЬ) ---
+
+async def autonomous_life_loop():
+    while True:
+        await asyncio.sleep(1800)
+        
+        pet["satiety"] = max(0, pet["satiety"] - 5)
+        pet["happiness"] = max(0, pet["happiness"] - 3)
+        pet["energy"] = max(0, pet["energy"] - 2)
+
+        if pet["chat_id"] and random.random() < 0.4:
+            mood = "голодный" if pet["satiety"] < 40 else "весёлый и игривый"
+            event_msg = generate_ai_event(mood)
+            try:
+                await bot.send_message(pet["chat_id"], event_msg)
+            except Exception as e:
+                logging.error(f"Не удалось отправить авто-сообщение: {e}")
+
+async def main():
+    asyncio.create_task(autonomous_life_loop())
+    await dp.start_polling(bot)
+
+if __name__ == "__main__":
+    asyncio.run(main())

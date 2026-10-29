@@ -106,10 +106,10 @@ def generate_ai_event(pet_data: dict, mood_context: str) -> str:
     )
 
     try:
-res = ai_client.models.generate_content(
-    model='gemini-2.0-flash',
-    contents=prompt
-)
+        response = ai_client.models.generate_content(
+            model='gemini-2.0-flash',
+            contents=prompt,
+        )
         return response.text.strip()
     except Exception as e:
         logging.error(f"Ошибка Gemini Event: {e}")
@@ -242,9 +242,9 @@ async def cmd_gift(message: types.Message):
         )
         try:
             res = ai_client.models.generate_content(
-    model='gemini-2.0-flash',
-    contents=prompt
-)
+                model='gemini-2.0-flash',
+                contents=prompt
+            )
             gift_text = res.text.strip()
         except Exception as e:
             logging.error(f"Ошибка Gemini Gift: {e}")

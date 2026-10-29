@@ -19,20 +19,39 @@ if not TOKEN:
 bot = Bot(token=TOKEN)
 dp = Dispatcher()
 
-# Инициализация ИИ-клиента Gemini (если задан ключ)
 ai_client = genai.Client(api_key=GEMINI_KEY) if GEMINI_KEY else None
+
+# Галерея скинов (картинки разных окрасов Рудика)
+SKINS = {
+    "blue": {
+        "name": "🩵 Космический синий",
+        "url": "https://images.unsplash.com/photo-1579783902614-a3fb3927b675?w=800&auto=format&fit=crop"
+    },
+    "pink": {
+        "name": "🌸 Неоново-розовый",
+        "url": "https://images.unsplash.com/photo-1534447677768-be436bb09401?w=800&auto=format&fit=crop"
+    },
+    "purple": {
+        "name": "💜 Галактический фиолетовый",
+        "url": "https://images.unsplash.com/photo-1507525428034-b723cf961d3e?w=800&auto=format&fit=crop"
+    },
+    "gold": {
+        "name": "🟡 Золотой звёздный",
+        "url": "https://images.unsplash.com/photo-1518709268805-4e9042af9f23?w=800&auto=format&fit=crop"
+    }
+}
 
 # Состояние питомца
 pet = {
     "name": "Рудик",
-    "satiety": 70,   # Сытость (0-100)
-    "happiness": 70, # Счастье (0-100)
-    "energy": 70,    # Энергия (0-100)
-    "chat_id": None  # ID чата запоминается при /start, /pet или входе в группу
+    "satiety": 70,
+    "happiness": 70,
+    "energy": 70,
+    "color": "blue",  # Базовый цвет
+    "chat_id": None
 }
 
 def generate_ai_event(mood_context: str) -> str:
-    """Генерация автономной выходки питомца через Gemini"""
     if not ai_client:
         fallback_events = [
             f"🐾 {pet['name']} тихо шуршит пакетом в углу...",
@@ -43,6 +62,7 @@ def generate_ai_event(mood_context: str) -> str:
 
     prompt = (
         f"Ты — виртуальный домашний питомец по имени {pet['name']}. "
+        f"Твой текущий цвет шерстки: {SKINS[pet['color']]['name']}. "
         f"Твоё состояние сейчас: {mood_context}. "
         f"Придумай одну очень короткую, смешную и забавную выходку или фразу (1-2 предложения), "
         f"которую ты прямо сейчас делаешь в групповом чате. Добавь подходящие эмодзи."
@@ -63,8 +83,11 @@ def get_status_text() -> str:
         filled = round(value / 20)
         return "🟩" * filled + "⬜" * (5 - filled)
 
+    current_skin = SKINS[pet['color']]['name']
+
     return (
-        f"🐾 **Питомец:** {pet['name']}\n\n"
+        f"🐾 **Питомец:** {pet['name']}\n"
+        f"🎨 **Шерстка:** {current_skin}\n\n"
         f"🍖 **Сытость:** {make_bar(pet['satiety'])} ({pet['satiety']}%)\n"
         f"💛 **Счастье:** {make_bar(pet['happiness'])} ({pet['happiness']}%)\n"
         f"⚡ **Энергия:** {make_bar(pet['energy'])} ({pet['energy']}%)\n"
@@ -75,10 +98,21 @@ def get_keyboard():
     builder.button(text="🍎 Покормить", callback_data="feed")
     builder.button(text="⚽ Поиграть", callback_data="play")
     builder.button(text="😴 Спать", callback_data="sleep")
-    builder.adjust(3)
+    builder.button(text="🎨 Сменить цвет", callback_data="open_color_menu")
+    builder.adjust(3, 1)
     return builder.as_markup()
 
-# --- АВТОМАТИЧЕСКОЕ ПРИВЕТСТВИЕ ПРИ ДОБАВЛЕНИИ В ЧАТ ---
+def get_color_keyboard():
+    builder = InlineKeyboardBuilder()
+    builder.button(text="🩵 Синий", callback_data="set_color_blue")
+    builder.button(text="🌸 Розовый", callback_data="set_color_pink")
+    builder.button(text="💜 Фиолетовый", callback_data="set_color_purple")
+    builder.button(text="🟡 Золотой", callback_data="set_color_gold")
+    builder.button(text="⬅️ Назад", callback_data="back_to_status")
+    builder.adjust(2, 2, 1)
+    return builder.as_markup()
+
+# --- АВТО-ПРИВЕТСТВИЕ ---
 
 @dp.my_chat_member(ChatMemberUpdatedFilter(member_status_changed=JOIN_TRANSITION))
 async def bot_added_to_chat(event: types.ChatMemberUpdated):
@@ -86,43 +120,36 @@ async def bot_added_to_chat(event: types.ChatMemberUpdated):
     
     welcome_text = (
         f"Всем привет! 🐾 Я ваш новый инопланетный питомец **{pet['name']}**!\n\n"
-        f"Теперь я буду жить в этом чате, играть с вами и иногда устраивать маленькие внезапные выходки 📦\n\n"
         f"Вот что со мной можно делать:\n"
-        f"• `/pet` — проверить моё состояние и поухаживать за мной\n"
-        f"• `/gift` — попросить меня принести вам случайный подарок 🎁\n"
+        f"• `/pet` — посмотреть моё состояние и фото 📸\n"
+        f"• `/color` — изменить цвет моей шерстки 🎨\n"
+        f"• `/gift` — попросить у меня случайный подарок 🎁\n"
         f"• `/rename [имя]` — дать мне новое имя ✨\n\n"
-        f"Не забывайте меня кормить и укладывать спать! Начнём?\n\n"
     ) + get_status_text()
 
-    await bot.send_message(
+    await bot.send_photo(
         chat_id=event.chat.id,
-        text=welcome_text,
+        photo=SKINS[pet['color']]['url'],
+        caption=welcome_text,
         parse_mode="Markdown",
         reply_markup=get_keyboard()
     )
 
-# --- КОМANDЫ БОТА ---
+# --- КОМАНДЫ ---
 
-@dp.message(Command("start"))
-async def cmd_start(message: types.Message):
-    pet["chat_id"] = message.chat.id
-    
-    welcome_text = (
-        f"Привет всем! 🐾 Я ваш новый инопланетный питомец **{pet['name']}**!\n\n"
-        f"Я буду жить в этом чате, играть с вами и иногда устраивать маленькие внезапные выходки 📦\n\n"
-        f"Вот что со мной можно делать:\n"
-        f"• `/pet` — проверить моё состояние и поухаживать за мной\n"
-        f"• `/gift` — попросить меня принести вам случайный подарок 🎁\n"
-        f"• `/rename [имя]` — дать мне новое имя ✨\n\n"
-        f"Не забывайте меня кормить и укладывать спать! Начнём?\n\n"
-    ) + get_status_text()
-
-    await message.answer(welcome_text, parse_mode="Markdown", reply_markup=get_keyboard())
-
-@dp.message(Command("pet"))
+@dp.message(Command("start", "pet"))
 async def cmd_pet(message: types.Message):
     pet["chat_id"] = message.chat.id
-    await message.answer(get_status_text(), parse_mode="Markdown", reply_markup=get_keyboard())
+    await message.answer_photo(
+        photo=SKINS[pet['color']]['url'],
+        caption=get_status_text(),
+        parse_mode="Markdown",
+        reply_markup=get_keyboard()
+    )
+
+@dp.message(Command("color"))
+async def cmd_color(message: types.Message):
+    await message.answer("Выберите новый цвет шерстки для Рудика: 🎨", reply_markup=get_color_keyboard())
 
 @dp.message(Command("rename"))
 async def cmd_rename(message: types.Message):
@@ -138,7 +165,7 @@ async def cmd_gift(message: types.Message):
     user_name = message.from_user.first_name
     if ai_client:
         prompt = (
-            f"Придумай забавный, абсурдный или милый виртуальный подарок, который "
+            f"Придумай забавный виртуальный подарок, который "
             f"питомец {pet['name']} принёс в зубах/лапах для пользователя {user_name}. "
             f"Одно короткое предложение с эмодзи."
         )
@@ -152,7 +179,39 @@ async def cmd_gift(message: types.Message):
 
     await message.answer(gift_text)
 
-# --- ОБРАБОТКА КНОПОК ---
+# --- ОБРАБОТКА КНОПОК МЕНЮ ---
+
+@dp.callback_query(F.data == "open_color_menu")
+async def process_color_menu(callback: types.CallbackQuery):
+    await callback.message.edit_caption(
+        caption="Выберите новый цвет шерстки для Рудика: 🎨",
+        reply_markup=get_color_keyboard()
+    )
+    await callback.answer()
+
+@dp.callback_query(F.data.startswith("set_color_"))
+async def process_set_color(callback: types.CallbackQuery):
+    new_color = callback.data.replace("set_color_", "")
+    if new_color in SKINS:
+        pet["color"] = new_color
+        await callback.answer(f"Цвет изменён на {SKINS[new_color]['name']}! ✨")
+        
+        # Обновляем сообщение и меняем фото
+        media = types.InputMediaPhoto(
+            media=SKINS[pet['color']]['url'],
+            caption=f"🎨 Рудик сменил цвет шерстки!\n\n{get_status_text()}",
+            parse_mode="Markdown"
+        )
+        await callback.message.edit_media(media=media, reply_markup=get_keyboard())
+
+@dp.callback_query(F.data == "back_to_status")
+async def process_back_to_status(callback: types.CallbackQuery):
+    media = types.InputMediaPhoto(
+        media=SKINS[pet['color']]['url'],
+        caption=get_status_text(),
+        parse_mode="Markdown"
+    )
+    await callback.message.edit_media(media=media, reply_markup=get_keyboard())
 
 @dp.callback_query(F.data == "feed")
 async def process_feed(callback: types.CallbackQuery):
@@ -161,8 +220,8 @@ async def process_feed(callback: types.CallbackQuery):
         return
     
     pet["satiety"] = min(100, pet["satiety"] + 25)
-    await callback.message.edit_text(
-        f"🍎 Вы покормили {pet['name']}!\n\n{get_status_text()}",
+    await callback.message.edit_caption(
+        caption=f"🍎 Вы покормили {pet['name']}!\n\n{get_status_text()}",
         parse_mode="Markdown",
         reply_markup=get_keyboard()
     )
@@ -178,8 +237,8 @@ async def process_play(callback: types.CallbackQuery):
     pet["energy"] = max(0, pet["energy"] - 15)
     pet["satiety"] = max(0, pet["satiety"] - 10)
     
-    await callback.message.edit_text(
-        f"⚽ Отлично поиграли!\n\n{get_status_text()}",
+    await callback.message.edit_caption(
+        caption=f"⚽ Отлично поиграли!\n\n{get_status_text()}",
         parse_mode="Markdown",
         reply_markup=get_keyboard()
     )
@@ -188,14 +247,14 @@ async def process_play(callback: types.CallbackQuery):
 @dp.callback_query(F.data == "sleep")
 async def process_sleep(callback: types.CallbackQuery):
     pet["energy"] = min(100, pet["energy"] + 40)
-    await callback.message.edit_text(
-        f"😴 {pet['name']} вздремнул и восстановил силы!\n\n{get_status_text()}",
+    await callback.message.edit_caption(
+        caption=f"😴 {pet['name']} вздремнул и восстановил силы!\n\n{get_status_text()}",
         parse_mode="Markdown",
         reply_markup=get_keyboard()
     )
     await callback.answer()
 
-# --- ФОНОВЫЙ ЦИКЛ (АВТОНОМНАЯ ЖИЗНЬ) ---
+# --- ФОНОВЫЙ ЦИКЛ ---
 
 async def autonomous_life_loop():
     while True:

@@ -107,7 +107,7 @@ def generate_ai_event(pet_data: dict, mood_context: str) -> str:
 
     try:
         response = ai_client.models.generate_content(
-            model='gemini-2.5-flash',
+            model='gemini-2.0-flash',
             contents=prompt,
         )
         return response.text.strip()
@@ -242,7 +242,7 @@ async def cmd_gift(message: types.Message):
         )
         try:
             res = ai_client.models.generate_content(
-                model='gemini-2.5-flash',
+                model='gemini-2.0-flash',
                 contents=prompt
             )
             gift_text = res.text.strip()

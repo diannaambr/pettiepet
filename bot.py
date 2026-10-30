@@ -187,6 +187,21 @@ def get_status_text(pet_data: dict) -> str:
         f"⚡ **Энергия:** {make_bar(pet_data['energy'])} ({pet_data['energy']}%)\n"
     )
 
+def get_welcome_text(pet_data: dict) -> str:
+    return (
+        f"Привет! 🐾 Я ваш инопланетный питомец **{pet_data['name']}**!\n"
+        f"Ухаживайте за мной, прокачивайте мой уровень и IQ!\n\n"
+        f"📖 **Список команд:**\n"
+        f"• `/pet` — Панель состояния питомца 📸\n"
+        f"• `/study` — Позаниматься и прокачать IQ 📚\n"
+        f"• `/trick` — Попросить показать трюк 🎪\n"
+        f"• `/gift` — Получить случайный подарок 🎁\n"
+        f"• `/top` — Топ самых умных питомцев 🏆\n"
+        f"• `/color` — Изменить цвет шерстки 🎨\n"
+        f"• `/rename [имя]` — Дать новое имя ✨\n"
+        f"• `/help` — Показать это справочное меню ❓\n\n"
+    ) + get_status_text(pet_data)
+
 def get_keyboard():
     builder = InlineKeyboardBuilder()
     builder.button(text="🍎 Покормить", callback_data="feed")
@@ -216,18 +231,7 @@ def get_color_keyboard():
 async def bot_added_to_chat(event: types.ChatMemberUpdated):
     pet_data = get_pet(event.chat.id)
     skin_url = SKINS.get(pet_data["color"], SKINS["blue"])["url"]
-    
-    welcome_text = (
-        f"Всем привет! 🐾 Я ваш новый инопланетный питомец **{pet_data['name']}**!\n\n"
-        f"Вот что со мной можно делать:\n"
-        f"• `/pet` — посмотреть моё состояние 📸\n"
-        f"• `/study` — позаниматься и прокачать IQ 📚\n"
-        f"• `/trick` — попросить показать трюк 🎪\n"
-        f"• `/gift` — попросить случайный подарок 🎁\n"
-        f"• `/top` — посмотреть топ умных питомцев 🏆\n"
-        f"• `/color` — изменить цвет шерстки 🎨\n"
-        f"• `/rename [имя]` — дать мне новое имя ✨\n\n"
-    ) + get_status_text(pet_data)
+    welcome_text = get_welcome_text(pet_data)
 
     try:
         await bot.send_photo(
@@ -262,6 +266,26 @@ async def cmd_pet(message: types.Message):
     except Exception:
         await message.answer(
             text=get_status_text(pet_data),
+            parse_mode="Markdown",
+            reply_markup=get_keyboard()
+        )
+
+@dp.message(Command("help", "commands"))
+async def cmd_help(message: types.Message):
+    pet_data = get_pet(message.chat.id)
+    skin_url = SKINS.get(pet_data["color"], SKINS["blue"])["url"]
+    welcome_text = get_welcome_text(pet_data)
+
+    try:
+        await message.answer_photo(
+            photo=skin_url,
+            caption=welcome_text,
+            parse_mode="Markdown",
+            reply_markup=get_keyboard()
+        )
+    except Exception:
+        await message.answer(
+            text=welcome_text,
             parse_mode="Markdown",
             reply_markup=get_keyboard()
         )
@@ -537,15 +561,14 @@ async def process_sleep(callback: types.CallbackQuery):
         await callback.message.edit_text(text=caption_text, parse_mode="Markdown", reply_markup=get_keyboard())
     await callback.answer("Петти отправился спать на 5 минут! 💤")
 
-# --- ФОНОВЫЙ ЦИКЛ (ПРОВЕРКА СНА И АВТОНОМНЫЕ СОБЫТИЯ) ---
+# --- ФОНОВЫЙ ЦИКЛ ---
 
 async def autonomous_life_loop():
     while True:
-        await asyncio.sleep(15)  # Проверка статуса каждые 15 секунд
+        await asyncio.sleep(15)
         current_now = time.time()
         
         for chat_id_str, pet_data in list(pets_db.items()):
-            # Проверка пробуждения
             if pet_data.get("sleep_until", 0) > 0 and current_now >= pet_data["sleep_until"]:
                 pet_data["sleep_until"] = 0
                 pet_data["energy"] = 100
@@ -553,12 +576,11 @@ async def autonomous_life_loop():
                 try:
                     await bot.send_message(
                         int(chat_id_str),
-                        f"☀️ **{pet_data['name']} проснулся, полнен сил (Энергия 100%) и готов играть дальше!** 🐾"
+                        f"☀️ **{pet_data['name']} проснулся, полон сил (Энергия 100%) и готов играть дальше!** 🐾"
                     )
                 except Exception as e:
                     logging.error(f"Ошибка отправки уведомления о пробуждении: {e}")
 
-        # Каждые 30 минут снижаем показатели и отправляем автономные события
         if int(current_now) % 1800 < 15:
             for chat_id_str, pet_data in pets_db.items():
                 if not is_sleeping(pet_data):

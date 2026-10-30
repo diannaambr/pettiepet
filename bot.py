@@ -7,21 +7,16 @@ from aiogram import Bot, Dispatcher, F, types
 from aiogram.filters import Command
 from aiogram.filters.chat_member_updated import ChatMemberUpdatedFilter, JOIN_TRANSITION
 from aiogram.utils.keyboard import InlineKeyboardBuilder
-from google import genai
 
 logging.basicConfig(level=logging.INFO)
 
 TOKEN = os.getenv("BOT_TOKEN")
-GEMINI_KEY = os.getenv("GEMINI_API_KEY")
 
 if not TOKEN:
     raise ValueError("Ошибка: Переменная окружения BOT_TOKEN не задана!")
 
 bot = Bot(token=TOKEN)
 dp = Dispatcher()
-
-# Настройка клиента Gemini через официальную библиотеку
-ai_client = genai.Client(api_key=GEMINI_KEY) if GEMINI_KEY else None
 
 DATA_FILE = "pets_data.json"
 
@@ -52,6 +47,41 @@ SKINS = {
         "url": "https://i.postimg.cc/X7XYfJr6/Gemini-Generated-Image-abd5yoabd5yoabd5.jpg"
     }
 }
+
+# --- НАБОРЫ ДЕЙСТВИЙ И ПОДАРКОВ ---
+
+GIFTS = [
+    "🎁 {pet} принёс для {user} блестящий космический камушек!",
+    "🎁 {pet} притащил в зубах свежий кекс с другого конца галактики!",
+    "🎁 {pet} подарил {user} маленькую звёздочку в прозрачной баночке!",
+    "🎁 {pet} выкатил из под дивана забавную пищащую игрушку для {user}!",
+    "🎁 {pet} протягивает {user} пушистый космический одуванчик 🌸",
+    "🎁 {pet} достал из тайника редкий разноцветный кристалльчик для {user}!",
+    "🎁 {pet} гордо принёс {user} миниатюрную тарелочку с космическим печеньем!",
+    "🎁 {pet} нашел и притащил {user} мягкие домашние тапочки!",
+    "🎁 {pet} протягивает {user} волшебную палочку, которая светится в темноте ✨",
+    "🎁 {pet} делится с {user} своим любимым виртуальным пледиком!",
+    "🎁 {pet} принёс для {user} баночку с мерцающим космическим вареньем 🍓",
+    "🎁 {pet} достал откуда-то крошечный бумажный самолётик с предсказанием!"
+]
+
+AUTONOMOUS_EVENTS_HAPPY = [
+    "🐾 {pet} весело катается по ковру и пытается поймать свой хвост!",
+    "🧶 {pet} гоняет по всему чату виртуальный клубочек шерсти.",
+    "📦 {pet} с разбега запрыгнул в картонную коробку и гордо сидит там.",
+    "✨ {pet} забавно чихнул и случайно выпустил пучок искорок!",
+    "🎶 {pet} мурчит и напевает про себя какую-то инопланетную песенку.",
+    "🛸 {pet} подпрыгнул на месте и на секунду завис в воздухе от радости!",
+    "🐾 {pet} развалился на солнышке и сладко потягивает лапки.",
+    "🔮 {pet} внимательно разглядывает пылинку, думая, что это новая планета."
+]
+
+AUTONOMOUS_EVENTS_HUNGRY = [
+    "🥐 {pet} сидит возле своей миски и намекающе вздыхает...",
+    "🐾 {pet} тихо шуршит пакетиком на кухне в поисках вкусняшек.",
+    "👀 {pet} жалобно смотрит на всех в чате, намекая, что пора бы покушать!",
+    "🍽️ {pet} аккуратно двигает лапкой пустую миску ближе к вам."
+]
 
 # --- АВТОСОХРАНЕНИЕ ---
 
@@ -85,35 +115,6 @@ def get_pet(chat_id: int):
         }
         save_all_pets(pets_db)
     return pets_db[str_id]
-
-# --- ИИ ГЕНЕРАЦИЯ ---
-
-def generate_ai_event(pet_data: dict, mood_context: str) -> str:
-    fallback_events = [
-        f"🐾 {pet_data['name']} тихо шуршит пакетом в углу...",
-        f"📦 {pet_data['name']} пытался залезть в коробку, но промазал.",
-        f"🧶 {pet_data['name']} катает по комнате виртуальный клубок."
-    ]
-    if not ai_client:
-        return random.choice(fallback_events)
-
-    color_info = SKINS.get(pet_data["color"], SKINS["blue"])["name"]
-    prompt = (
-        f"Ты — виртуальный домашний инопланетный питомец по имени {pet_data['name']}. "
-        f"Твой цвет шерстки: {color_info}. Состояние: {mood_context}. "
-        f"Придумай одну очень короткую, смешную и забавную выходку или фразу (1-2 предложения) "
-        f"для чата с друзьями. Добавь эмодзи."
-    )
-
-    try:
-        response = ai_client.models.generate_content(
-            model='gemini-3.0-flash',
-            contents=prompt,
-        )
-        return response.text.strip()
-    except Exception as e:
-        logging.error(f"Ошибка Gemini Event: {e}")
-        return random.choice(fallback_events)
 
 def get_status_text(pet_data: dict) -> str:
     def make_bar(value):
@@ -228,30 +229,8 @@ async def cmd_gift(message: types.Message):
     pet_data = get_pet(message.chat.id)
     user_name = message.from_user.first_name
     
-    fallback_gifts = [
-        f"🎁 {pet_data['name']} принёс для {user_name} блестящий космический камушек!",
-        f"🎁 {pet_data['name']} притащил в зубах свежий кекс с другого конца галактики!",
-        f"🎁 {pet_data['name']} подарил {user_name} маленькую звёздочку в баночке!"
-    ]
-
-    if ai_client:
-        prompt = (
-            f"Придумай очень смешной, милый или необычный виртуальный подарок, который "
-            f"питомец {pet_data['name']} принёс в зубах/лапах для пользователя {user_name}. "
-            f"Одно короткое предложение с эмодзи. Отвечай только текстом подарка."
-        )
-        try:
-            res = ai_client.models.generate_content(
-                model='gemini-3.0-flash',
-                contents=prompt
-            )
-            gift_text = res.text.strip()
-        except Exception as e:
-            logging.error(f"Ошибка Gemini Gift: {e}")
-            gift_text = random.choice(fallback_gifts)
-    else:
-        gift_text = random.choice(fallback_gifts)
-
+    gift_template = random.choice(GIFTS)
+    gift_text = gift_template.format(pet=pet_data["name"], user=user_name)
     await message.answer(gift_text)
 
 # --- ОБРАБОТКА КНОПОК ---
@@ -369,7 +348,7 @@ async def process_sleep(callback: types.CallbackQuery):
         await callback.message.edit_text(text=caption_text, parse_mode="Markdown", reply_markup=get_keyboard())
     await callback.answer()
 
-# --- ФОНОВЫЙ ЦИКЛ ---
+# --- ФОНОВЫЙ ЦИКЛ (КАЖДЫЕ 30 МИНУТ) ---
 
 async def autonomous_life_loop():
     while True:
@@ -381,8 +360,11 @@ async def autonomous_life_loop():
             pet_data["energy"] = max(0, pet_data["energy"] - 2)
 
             if random.random() < 0.4:
-                mood = "голодный" if pet_data["satiety"] < 40 else "весёлый и игривый"
-                event_msg = generate_ai_event(pet_data, mood)
+                if pet_data["satiety"] < 40:
+                    event_msg = random.choice(AUTONOMOUS_EVENTS_HUNGRY).format(pet=pet_data["name"])
+                else:
+                    event_msg = random.choice(AUTONOMOUS_EVENTS_HAPPY).format(pet=pet_data["name"])
+                
                 try:
                     await bot.send_message(int(chat_id_str), event_msg)
                 except Exception as e:

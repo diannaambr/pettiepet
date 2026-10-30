@@ -1,5 +1,4 @@
 import asyncio
-import json
 import logging
 import os
 import random
@@ -9,18 +8,27 @@ from aiogram.filters import Command
 from aiogram.filters.chat_member_updated import ChatMemberUpdatedFilter, JOIN_TRANSITION
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from aiohttp import web
+from motor.motor_asyncio import AsyncIOMotorClient
 
 logging.basicConfig(level=logging.INFO)
 
 TOKEN = os.getenv("BOT_TOKEN")
+MONGO_URL = os.getenv("MONGO_URL")
 
 if not TOKEN:
     raise ValueError("Ошибка: Переменная окружения BOT_TOKEN не задана!")
 
+if not MONGO_URL:
+    raise ValueError("Ошибка: Переменная окружения MONGO_URL не задана!")
+
 bot = Bot(token=TOKEN)
 dp = Dispatcher()
 
-DATA_FILE = "pets_data.json"
+# Подключение к базе данных MongoDB Atlas
+mongo_client = AsyncIOMotorClient(MONGO_URL)
+db = mongo_client["pettie_database"]
+pets_collection = db["pets"]
+
 SLEEP_DURATION_SECONDS = 300  # 5 минут сна
 
 # Галерея скинов Петти
@@ -100,30 +108,14 @@ AUTONOMOUS_EVENTS_HUNGRY = [
     "🍽️ {pet} аккуратно двигает лапкой пустую миску ближе к вам."
 ]
 
-# --- АВТОСОХРАНЕНИЕ ---
+# --- РАБОТА С БАЗОЙ ДАННЫХ MONGODB ---
 
-def load_all_pets():
-    if os.path.exists(DATA_FILE):
-        try:
-            with open(DATA_FILE, "r", encoding="utf-8") as f:
-                return json.load(f)
-        except Exception as e:
-            logging.error(f"Ошибка чтения файла: {e}")
-    return {}
-
-def save_all_pets(data):
-    try:
-        with open(DATA_FILE, "w", encoding="utf-8") as f:
-            json.dump(data, f, ensure_ascii=False, indent=2)
-    except Exception as e:
-        logging.error(f"Ошибка сохранения файла: {e}")
-
-pets_db = load_all_pets()
-
-def get_pet(chat_id: int):
+async def get_pet(chat_id: int) -> dict:
     str_id = str(chat_id)
-    if str_id not in pets_db:
-        pets_db[str_id] = {
+    pet = await pets_collection.find_one({"chat_id": str_id})
+    if not pet:
+        pet = {
+            "chat_id": str_id,
             "name": "Петти",
             "satiety": 70,
             "happiness": 70,
@@ -135,15 +127,15 @@ def get_pet(chat_id: int):
             "age": 1,
             "sleep_until": 0
         }
-        save_all_pets(pets_db)
-    else:
-        pet = pets_db[str_id]
-        pet.setdefault("level", 1)
-        pet.setdefault("exp", 0)
-        pet.setdefault("iq", 10)
-        pet.setdefault("age", 1)
-        pet.setdefault("sleep_until", 0)
-    return pets_db[str_id]
+        await pets_collection.insert_one(pet)
+    return pet
+
+async def save_pet(pet_data: dict):
+    await pets_collection.update_one(
+        {"chat_id": pet_data["chat_id"]},
+        {"$set": pet_data},
+        upsert=True
+    )
 
 def is_sleeping(pet_data: dict) -> bool:
     return time.time() < pet_data.get("sleep_until", 0)
@@ -229,7 +221,7 @@ def get_color_keyboard():
 
 @dp.my_chat_member(ChatMemberUpdatedFilter(member_status_changed=JOIN_TRANSITION))
 async def bot_added_to_chat(event: types.ChatMemberUpdated):
-    pet_data = get_pet(event.chat.id)
+    pet_data = await get_pet(event.chat.id)
     skin_url = SKINS.get(pet_data["color"], SKINS["blue"])["url"]
     welcome_text = get_welcome_text(pet_data)
 
@@ -253,7 +245,7 @@ async def bot_added_to_chat(event: types.ChatMemberUpdated):
 
 @dp.message(Command("start", "pet"))
 async def cmd_pet(message: types.Message):
-    pet_data = get_pet(message.chat.id)
+    pet_data = await get_pet(message.chat.id)
     skin_url = SKINS.get(pet_data["color"], SKINS["blue"])["url"]
     
     try:
@@ -272,7 +264,7 @@ async def cmd_pet(message: types.Message):
 
 @dp.message(Command("help", "commands"))
 async def cmd_help(message: types.Message):
-    pet_data = get_pet(message.chat.id)
+    pet_data = await get_pet(message.chat.id)
     skin_url = SKINS.get(pet_data["color"], SKINS["blue"])["url"]
     welcome_text = get_welcome_text(pet_data)
 
@@ -292,7 +284,7 @@ async def cmd_help(message: types.Message):
 
 @dp.message(Command("color"))
 async def cmd_color(message: types.Message):
-    pet_data = get_pet(message.chat.id)
+    pet_data = await get_pet(message.chat.id)
     if is_sleeping(pet_data):
         rem_min = (get_remaining_sleep_time(pet_data) // 60) + 1
         await message.answer(f"😴 {pet_data['name']} сейчас сладко спит и проснется через ~{rem_min} мин. Не будите его!")
@@ -305,18 +297,18 @@ async def cmd_color(message: types.Message):
 
 @dp.message(Command("rename"))
 async def cmd_rename(message: types.Message):
-    pet_data = get_pet(message.chat.id)
+    pet_data = await get_pet(message.chat.id)
     args = message.text.split(maxsplit=1)
     if len(args) > 1:
         pet_data["name"] = args[1].strip()
-        save_all_pets(pets_db)
+        await save_pet(pet_data)
         await message.answer(f"✨ Питомца теперь зовут **{pet_data['name']}**!")
     else:
         await message.answer("Укажите новое имя, например: `/rename Петти`", parse_mode="Markdown")
 
 @dp.message(Command("gift"))
 async def cmd_gift(message: types.Message):
-    pet_data = get_pet(message.chat.id)
+    pet_data = await get_pet(message.chat.id)
     if is_sleeping(pet_data):
         rem_min = (get_remaining_sleep_time(pet_data) // 60) + 1
         await message.answer(f"😴 {pet_data['name']} спит и не может принести подарок. Проснется через ~{rem_min} мин.!")
@@ -329,7 +321,7 @@ async def cmd_gift(message: types.Message):
 
 @dp.message(Command("study"))
 async def cmd_study(message: types.Message):
-    pet_data = get_pet(message.chat.id)
+    pet_data = await get_pet(message.chat.id)
     if is_sleeping(pet_data):
         rem_min = (get_remaining_sleep_time(pet_data) // 60) + 1
         await message.answer(f"😴 {pet_data['name']} спит! Проснется через ~{rem_min} мин.")
@@ -343,14 +335,14 @@ async def cmd_study(message: types.Message):
     pet_data["energy"] = max(0, pet_data["energy"] - 20)
     pet_data["satiety"] = max(0, pet_data["satiety"] - 10)
     lvl_msg = add_exp(pet_data, 25)
-    save_all_pets(pets_db)
+    await save_pet(pet_data)
     
     phrase = random.choice(STUDY_PHRASES).format(pet=pet_data["name"])
     await message.answer(f"{phrase}\n🧠 **IQ вырастает до {pet_data['iq']}!** (+25 EXP){lvl_msg}")
 
 @dp.message(Command("trick"))
 async def cmd_trick(message: types.Message):
-    pet_data = get_pet(message.chat.id)
+    pet_data = await get_pet(message.chat.id)
     if is_sleeping(pet_data):
         rem_min = (get_remaining_sleep_time(pet_data) // 60) + 1
         await message.answer(f"😴 {pet_data['name']} спит! Проснется через ~{rem_min} мин.")
@@ -365,11 +357,12 @@ async def cmd_trick(message: types.Message):
 
 @dp.message(Command("top"))
 async def cmd_top(message: types.Message):
-    if not pets_db:
+    cursor = pets_collection.find().sort([("level", -1), ("iq", -1)]).limit(5)
+    sorted_pets = await cursor.to_list(length=5)
+    
+    if not sorted_pets:
         await message.answer("Пока нет зарегистрированных питомцев!")
         return
-    
-    sorted_pets = sorted(pets_db.values(), key=lambda p: (p.get("level", 1), p.get("iq", 10)), reverse=True)[:5]
     
     top_text = "🏆 **ТОП-5 САМЫХ УМНЫХ И РАЗВИТЫХ ПИТОМЦЕВ:**\n\n"
     medals = ["🥇", "🥈", "🥉", "4️⃣", "5️⃣"]
@@ -383,7 +376,7 @@ async def cmd_top(message: types.Message):
 
 @dp.callback_query(F.data == "open_color_menu")
 async def process_color_menu(callback: types.CallbackQuery):
-    pet_data = get_pet(callback.message.chat.id)
+    pet_data = await get_pet(callback.message.chat.id)
     if is_sleeping(pet_data):
         rem_min = (get_remaining_sleep_time(pet_data) // 60) + 1
         await callback.answer(f"😴 {pet_data['name']} спит! Проснется через ~{rem_min} мин.", show_alert=True)
@@ -398,7 +391,7 @@ async def process_color_menu(callback: types.CallbackQuery):
 
 @dp.callback_query(F.data.startswith("set_color_"))
 async def process_set_color(callback: types.CallbackQuery):
-    pet_data = get_pet(callback.message.chat.id)
+    pet_data = await get_pet(callback.message.chat.id)
     if is_sleeping(pet_data):
         rem_min = (get_remaining_sleep_time(pet_data) // 60) + 1
         await callback.answer(f"😴 {pet_data['name']} спит! Проснется через ~{rem_min} мин.", show_alert=True)
@@ -407,7 +400,7 @@ async def process_set_color(callback: types.CallbackQuery):
     new_color = callback.data.replace("set_color_", "")
     if new_color in SKINS:
         pet_data["color"] = new_color
-        save_all_pets(pets_db)
+        await save_pet(pet_data)
         
         skin = SKINS[new_color]
         await callback.answer(f"Цвет изменён на {skin['name']}! ✨")
@@ -435,7 +428,7 @@ async def process_set_color(callback: types.CallbackQuery):
 
 @dp.callback_query(F.data == "back_to_status")
 async def process_back_to_status(callback: types.CallbackQuery):
-    pet_data = get_pet(callback.message.chat.id)
+    pet_data = await get_pet(callback.message.chat.id)
     if callback.message.photo:
         await callback.message.edit_caption(
             caption=get_status_text(pet_data),
@@ -452,7 +445,7 @@ async def process_back_to_status(callback: types.CallbackQuery):
 
 @dp.callback_query(F.data == "feed")
 async def process_feed(callback: types.CallbackQuery):
-    pet_data = get_pet(callback.message.chat.id)
+    pet_data = await get_pet(callback.message.chat.id)
     if is_sleeping(pet_data):
         rem_min = (get_remaining_sleep_time(pet_data) // 60) + 1
         await callback.answer(f"😴 {pet_data['name']} сейчас спит! Проснется через ~{rem_min} мин.", show_alert=True)
@@ -464,7 +457,7 @@ async def process_feed(callback: types.CallbackQuery):
     
     pet_data["satiety"] = min(100, pet_data["satiety"] + 25)
     lvl_msg = add_exp(pet_data, 10)
-    save_all_pets(pets_db)
+    await save_pet(pet_data)
     
     caption_text = f"🍎 Вы покормили {pet_data['name']}! (+10 EXP){lvl_msg}\n\n{get_status_text(pet_data)}"
     
@@ -476,7 +469,7 @@ async def process_feed(callback: types.CallbackQuery):
 
 @dp.callback_query(F.data == "play")
 async def process_play(callback: types.CallbackQuery):
-    pet_data = get_pet(callback.message.chat.id)
+    pet_data = await get_pet(callback.message.chat.id)
     if is_sleeping(pet_data):
         rem_min = (get_remaining_sleep_time(pet_data) // 60) + 1
         await callback.answer(f"😴 {pet_data['name']} сейчас спит! Проснется через ~{rem_min} мин.", show_alert=True)
@@ -490,7 +483,7 @@ async def process_play(callback: types.CallbackQuery):
     pet_data["energy"] = max(0, pet_data["energy"] - 15)
     pet_data["satiety"] = max(0, pet_data["satiety"] - 10)
     lvl_msg = add_exp(pet_data, 15)
-    save_all_pets(pets_db)
+    await save_pet(pet_data)
     
     caption_text = f"⚽ Отлично поиграли! (+15 EXP){lvl_msg}\n\n{get_status_text(pet_data)}"
     
@@ -502,7 +495,7 @@ async def process_play(callback: types.CallbackQuery):
 
 @dp.callback_query(F.data == "study")
 async def process_study(callback: types.CallbackQuery):
-    pet_data = get_pet(callback.message.chat.id)
+    pet_data = await get_pet(callback.message.chat.id)
     if is_sleeping(pet_data):
         rem_min = (get_remaining_sleep_time(pet_data) // 60) + 1
         await callback.answer(f"😴 {pet_data['name']} сейчас спит! Проснется через ~{rem_min} мин.", show_alert=True)
@@ -516,7 +509,7 @@ async def process_study(callback: types.CallbackQuery):
     pet_data["energy"] = max(0, pet_data["energy"] - 20)
     pet_data["satiety"] = max(0, pet_data["satiety"] - 10)
     lvl_msg = add_exp(pet_data, 25)
-    save_all_pets(pets_db)
+    await save_pet(pet_data)
     
     phrase = random.choice(STUDY_PHRASES).format(pet=pet_data["name"])
     caption_text = f"{phrase}\n🧠 IQ: {pet_data['iq']} (+25 EXP){lvl_msg}\n\n{get_status_text(pet_data)}"
@@ -529,7 +522,7 @@ async def process_study(callback: types.CallbackQuery):
 
 @dp.callback_query(F.data == "trick")
 async def process_trick(callback: types.CallbackQuery):
-    pet_data = get_pet(callback.message.chat.id)
+    pet_data = await get_pet(callback.message.chat.id)
     if is_sleeping(pet_data):
         rem_min = (get_remaining_sleep_time(pet_data) // 60) + 1
         await callback.answer(f"😴 {pet_data['name']} сейчас спит! Проснется через ~{rem_min} мин.", show_alert=True)
@@ -544,14 +537,14 @@ async def process_trick(callback: types.CallbackQuery):
 
 @dp.callback_query(F.data == "sleep")
 async def process_sleep(callback: types.CallbackQuery):
-    pet_data = get_pet(callback.message.chat.id)
+    pet_data = await get_pet(callback.message.chat.id)
     if is_sleeping(pet_data):
         rem_min = (get_remaining_sleep_time(pet_data) // 60) + 1
         await callback.answer(f"😴 {pet_data['name']} уже сладко спит! Проснется через ~{rem_min} мин.", show_alert=True)
         return
 
     pet_data["sleep_until"] = time.time() + SLEEP_DURATION_SECONDS
-    save_all_pets(pets_db)
+    await save_pet(pet_data)
     
     caption_text = f"😴 {pet_data['name']} укутался в пледик и улегся спать на 5 минут!\n\n{get_status_text(pet_data)}"
     
@@ -568,21 +561,21 @@ async def autonomous_life_loop():
         await asyncio.sleep(15)
         current_now = time.time()
         
-        for chat_id_str, pet_data in list(pets_db.items()):
-            if pet_data.get("sleep_until", 0) > 0 and current_now >= pet_data["sleep_until"]:
+        async for pet_data in pets_collection.find({"sleep_until": {"$gt": 0}}):
+            if current_now >= pet_data["sleep_until"]:
                 pet_data["sleep_until"] = 0
                 pet_data["energy"] = 100
-                save_all_pets(pets_db)
+                await save_pet(pet_data)
                 try:
                     await bot.send_message(
-                        int(chat_id_str),
+                        int(pet_data["chat_id"]),
                         f"☀️ **{pet_data['name']} проснулся, полон сил (Энергия 100%) и готов играть дальше!** 🐾"
                     )
                 except Exception as e:
                     logging.error(f"Ошибка отправки уведомления о пробуждении: {e}")
 
         if int(current_now) % 1800 < 15:
-            for chat_id_str, pet_data in pets_db.items():
+            async for pet_data in pets_collection.find():
                 if not is_sleeping(pet_data):
                     pet_data["satiety"] = max(0, pet_data["satiety"] - 5)
                     pet_data["happiness"] = max(0, pet_data["happiness"] - 3)
@@ -595,10 +588,10 @@ async def autonomous_life_loop():
                             event_msg = random.choice(AUTONOMOUS_EVENTS_HAPPY).format(pet=pet_data["name"])
                         
                         try:
-                            await bot.send_message(int(chat_id_str), event_msg)
+                            await bot.send_message(int(pet_data["chat_id"]), event_msg)
                         except Exception as e:
                             logging.error(f"Не удалось отправить сообщение: {e}")
-            save_all_pets(pets_db)
+                    await save_pet(pet_data)
 
 # --- ЗАГЛУШКА ДЛЯ РЕНДЕРА ---
 

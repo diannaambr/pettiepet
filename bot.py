@@ -7,6 +7,7 @@ from aiogram import Bot, Dispatcher, F, types
 from aiogram.filters import Command
 from aiogram.filters.chat_member_updated import ChatMemberUpdatedFilter, JOIN_TRANSITION
 from aiogram.utils.keyboard import InlineKeyboardBuilder
+from aiohttp import web
 
 logging.basicConfig(level=logging.INFO)
 
@@ -348,7 +349,7 @@ async def process_sleep(callback: types.CallbackQuery):
         await callback.message.edit_text(text=caption_text, parse_mode="Markdown", reply_markup=get_keyboard())
     await callback.answer()
 
-# --- ФОНОВЫЙ ЦИКЛ (КАЖДЫЕ 30 МИНУТ) ---
+# --- ФОНОВЫЙ ЦИКЛ ---
 
 async def autonomous_life_loop():
     while True:
@@ -372,7 +373,24 @@ async def autonomous_life_loop():
         
         save_all_pets(pets_db)
 
+# --- ЗАГЛУШКА ДЛЯ РЕНДЕРА (ФЕЙКОВЫЙ ВЕБ-СЕРВЕР) ---
+
+async def handle_ping(request):
+    return web.Response(text="Pettie is alive!")
+
+async def start_web_server():
+    app = web.Application()
+    app.router.add_get('/', handle_ping)
+    app.router.add_get('/health', handle_ping)
+    
+    port = int(os.getenv("PORT", 10000))
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, '0.0.0.0', port)
+    await site.start()
+
 async def main():
+    await start_web_server()
     asyncio.create_task(autonomous_life_loop())
     await dp.start_polling(bot)
 

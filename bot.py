@@ -30,6 +30,7 @@ db = mongo_client["pettie_database"]
 pets_collection = db["pets"]
 
 SLEEP_DURATION_SECONDS = 300  # 5 минут сна
+AUTONOMOUS_INTERVAL_SECONDS = 10800  # 3 часа между автономными действиями
 
 # Галерея скинов Петти
 SKINS = {
@@ -125,9 +126,18 @@ async def get_pet(chat_id: int) -> dict:
             "exp": 0,
             "iq": 10,
             "age": 1,
-            "sleep_until": 0
+            "sleep_until": 0,
+            "silent_mode": False
         }
         await pets_collection.insert_one(pet)
+    else:
+        # Гарантия наличия новых полей для существующих записей
+        pet.setdefault("level", 1)
+        pet.setdefault("exp", 0)
+        pet.setdefault("iq", 10)
+        pet.setdefault("age", 1)
+        pet.setdefault("sleep_until", 0)
+        pet.setdefault("silent_mode", False)
     return pet
 
 async def save_pet(pet_data: dict):
@@ -168,9 +178,12 @@ def get_status_text(pet_data: dict) -> str:
     else:
         sleep_status = "⚡ **Бодрствует**"
 
+    auto_status = "🔇 Отключены" if pet_data.get("silent_mode", False) else "🔔 Включены (раз в 3 ч.)"
+
     return (
         f"🐾 **Питомец:** {pet_data['name']}\n"
         f"Статус: {sleep_status}\n"
+        f"📢 **Авто-сообщения:** {auto_status}\n"
         f"🌟 **Уровень:** {pet_data['level']} ({pet_data['exp']}/{needed_exp} EXP)\n"
         f"🎂 **Возраст:** {pet_data['age']} дн. | 🧠 **IQ:** {pet_data['iq']}\n"
         f"🎨 **Шерстка:** {current_skin}\n\n"
@@ -191,6 +204,7 @@ def get_welcome_text(pet_data: dict) -> str:
         f"• `/top` — Топ самых умных питомцев 🏆\n"
         f"• `/color` — Изменить цвет шерстки 🎨\n"
         f"• `/rename [имя]` — Дать новое имя ✨\n"
+        f"• `/automsg` — Вкл/Выкл авто-сообщения в чат 🔔/🔇\n"
         f"• `/help` — Показать это справочное меню ❓\n\n"
     ) + get_status_text(pet_data)
 
@@ -280,6 +294,24 @@ async def cmd_help(message: types.Message):
             text=welcome_text,
             parse_mode="Markdown",
             reply_markup=get_keyboard()
+        )
+
+@dp.message(Command("automsg", "quiet"))
+async def cmd_automsg(message: types.Message):
+    pet_data = await get_pet(message.chat.id)
+    current_mode = pet_data.get("silent_mode", False)
+    pet_data["silent_mode"] = not current_mode
+    await save_pet(pet_data)
+
+    if pet_data["silent_mode"]:
+        await message.answer(
+            f"🔇 **Тихий режим включен!** {pet_data['name']} больше не будет сам отправлять фразы в чат, но продолжит отвечать на ваши команды и кнопки.",
+            parse_mode="Markdown"
+        )
+    else:
+        await message.answer(
+            f"🔔 **Авто-сообщения включены!** {pet_data['name']} будет иногда (не чаще раз в 3 часа) делиться своими мыслями в чате.",
+            parse_mode="Markdown"
         )
 
 @dp.message(Command("color"))
@@ -554,13 +586,14 @@ async def process_sleep(callback: types.CallbackQuery):
         await callback.message.edit_text(text=caption_text, parse_mode="Markdown", reply_markup=get_keyboard())
     await callback.answer("Петти отправился спать на 5 минут! 💤")
 
-# --- ФОНОВЫЙ ЦИКЛ ---
+# --- ФОНОВЫЙ ЦИКЛ (КАЖДЫЕ 3 ЧАСА) ---
 
 async def autonomous_life_loop():
     while True:
         await asyncio.sleep(15)
         current_now = time.time()
         
+        # Проверка пробуждения питомцев
         async for pet_data in pets_collection.find({"sleep_until": {"$gt": 0}}):
             if current_now >= pet_data["sleep_until"]:
                 pet_data["sleep_until"] = 0
@@ -574,23 +607,27 @@ async def autonomous_life_loop():
                 except Exception as e:
                     logging.error(f"Ошибка отправки уведомления о пробуждении: {e}")
 
-        if int(current_now) % 1800 < 15:
+        # Каждые 3 часа (10800 сек) понижаем показатели и присылаем фразы
+        if int(current_now) % AUTONOMOUS_INTERVAL_SECONDS < 15:
             async for pet_data in pets_collection.find():
                 if not is_sleeping(pet_data):
-                    pet_data["satiety"] = max(0, pet_data["satiety"] - 5)
-                    pet_data["happiness"] = max(0, pet_data["happiness"] - 3)
-                    pet_data["energy"] = max(0, pet_data["energy"] - 2)
+                    pet_data["satiety"] = max(0, pet_data["satiety"] - 15)
+                    pet_data["happiness"] = max(0, pet_data["happiness"] - 10)
+                    pet_data["energy"] = max(0, pet_data["energy"] - 8)
 
-                    if random.random() < 0.4:
-                        if pet_data["satiety"] < 40:
-                            event_msg = random.choice(AUTONOMOUS_EVENTS_HUNGRY).format(pet=pet_data["name"])
-                        else:
-                            event_msg = random.choice(AUTONOMOUS_EVENTS_HAPPY).format(pet=pet_data["name"])
-                        
-                        try:
-                            await bot.send_message(int(pet_data["chat_id"]), event_msg)
-                        except Exception as e:
-                            logging.error(f"Не удалось отправить сообщение: {e}")
+                    # Отправляем фразу ТОЛЬКО если тихий режим отключен
+                    if not pet_data.get("silent_mode", False):
+                        if random.random() < 0.5:
+                            if pet_data["satiety"] < 40:
+                                event_msg = random.choice(AUTONOMOUS_EVENTS_HUNGRY).format(pet=pet_data["name"])
+                            else:
+                                event_msg = random.choice(AUTONOMOUS_EVENTS_HAPPY).format(pet=pet_data["name"])
+                            
+                            try:
+                                await bot.send_message(int(pet_data["chat_id"]), event_msg)
+                            except Exception as e:
+                                logging.error(f"Не удалось отправить сообщение: {e}")
+                    
                     await save_pet(pet_data)
 
 # --- ЗАГЛУШКА ДЛЯ РЕНДЕРА ---
